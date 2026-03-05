@@ -47,12 +47,14 @@ pub mod solana_staking_pool {
         ), amount)?;
 
         let pool = &mut ctx.accounts.pool;
+        let pool_key = pool.key();
         pool.total_staked = pool.total_staked.checked_add(amount).ok_or(StakingError::MathOverflow)?;
+        let acc_reward = pool.accumulated_reward_per_token;
         let entry = &mut ctx.accounts.stake_entry;
         entry.owner = ctx.accounts.owner.key();
-        entry.pool = ctx.accounts.pool.key();
+        entry.pool = pool_key;
         entry.amount = entry.amount.checked_add(amount).ok_or(StakingError::MathOverflow)?;
-        entry.reward_debt = calc_debt(entry.amount, pool.accumulated_reward_per_token)?;
+        entry.reward_debt = calc_debt(entry.amount, acc_reward)?;
         entry.bump = ctx.bumps.stake_entry;
         Ok(())
     }
