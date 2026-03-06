@@ -23,6 +23,7 @@ custom-panic = []
 [dependencies]
 anchor-lang = { version = "0.32.0", features = ["init-if-needed"] }
 anchor-spl = "0.32.0"
+solana-dao-voting = { path = "../../../solana-dao-voting/programs/solana-dao-voting", features = ["cpi"] }
 
 
 [lints.rust]
