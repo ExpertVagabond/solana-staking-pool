@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{Mint, TokenInterface, TokenAccount, TransferChecked, transfer_checked};
 
 declare_id!("E3xDfoQKgqdCNgnK1B77xgRjKYjEsBCXvPxZDGoxercH");
 
@@ -40,18 +40,18 @@ pub mod solana_staking_pool {
             let pending = calc_pending(entry.amount, pool.accumulated_reward_per_token, entry.reward_debt)?;
             if pending > 0 {
                 let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
-                token::transfer(CpiContext::new_with_signer(
+                transfer_checked(CpiContext::new_with_signer(
                     ctx.accounts.token_program.to_account_info(),
-                    Transfer { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info() },
+                    TransferChecked { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.reward_mint.to_account_info() },
                     &[seeds],
-                ), pending)?;
+                ), pending, ctx.accounts.reward_mint.decimals)?;
             }
         }
 
-        token::transfer(CpiContext::new(
+        transfer_checked(CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
-            Transfer { from: ctx.accounts.user_stake_ata.to_account_info(), to: ctx.accounts.stake_vault.to_account_info(), authority: ctx.accounts.owner.to_account_info() },
-        ), amount)?;
+            TransferChecked { from: ctx.accounts.user_stake_ata.to_account_info(), to: ctx.accounts.stake_vault.to_account_info(), authority: ctx.accounts.owner.to_account_info(), mint: ctx.accounts.stake_mint.to_account_info() },
+        ), amount, ctx.accounts.stake_mint.decimals)?;
 
         let pool = &mut ctx.accounts.pool;
         let pool_key = pool.key();
@@ -83,18 +83,18 @@ pub mod solana_staking_pool {
         let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
 
         if pending > 0 {
-            token::transfer(CpiContext::new_with_signer(
+            transfer_checked(CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
-                Transfer { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info() },
+                TransferChecked { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.reward_mint.to_account_info() },
                 &[seeds],
-            ), pending)?;
+            ), pending, ctx.accounts.reward_mint.decimals)?;
         }
 
-        token::transfer(CpiContext::new_with_signer(
+        transfer_checked(CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer { from: ctx.accounts.stake_vault.to_account_info(), to: ctx.accounts.user_stake_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info() },
+            TransferChecked { from: ctx.accounts.stake_vault.to_account_info(), to: ctx.accounts.user_stake_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.stake_mint.to_account_info() },
             &[seeds],
-        ), amount)?;
+        ), amount, ctx.accounts.stake_mint.decimals)?;
 
         let pool = &mut ctx.accounts.pool;
         pool.total_staked = pool.total_staked.checked_sub(amount).ok_or(StakingError::MathOverflow)?;
@@ -118,11 +118,11 @@ pub mod solana_staking_pool {
         require!(pending > 0, StakingError::NoPendingRewards);
 
         let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
-        token::transfer(CpiContext::new_with_signer(
+        transfer_checked(CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info() },
+            TransferChecked { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.reward_mint.to_account_info() },
             &[seeds],
-        ), pending)?;
+        ), pending, ctx.accounts.reward_mint.decimals)?;
 
         entry.reward_debt = calc_debt(entry.amount, pool.accumulated_reward_per_token)?;
 
@@ -167,17 +167,17 @@ fn calc_debt(amount: u64, accumulated: u128) -> Result<u128> {
 pub struct InitializePool<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
-    pub stake_mint: Account<'info, Mint>,
-    pub reward_mint: Account<'info, Mint>,
+    pub stake_mint: InterfaceAccount<'info, Mint>,
+    pub reward_mint: InterfaceAccount<'info, Mint>,
     #[account(init, payer = authority, space = 8 + StakePool::INIT_SPACE,
         seeds = [b"pool", authority.key().as_ref(), stake_mint.key().as_ref()], bump)]
     pub pool: Account<'info, StakePool>,
     #[account(init, payer = authority, token::mint = stake_mint, token::authority = pool)]
-    pub stake_vault: Account<'info, TokenAccount>,
+    pub stake_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(init, payer = authority, token::mint = reward_mint, token::authority = pool)]
-    pub reward_vault: Account<'info, TokenAccount>,
+    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
     pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub rent: Sysvar<'info, Rent>,
 }
 
@@ -190,16 +190,20 @@ pub struct Stake<'info> {
     #[account(init_if_needed, payer = owner, space = 8 + StakeEntry::INIT_SPACE,
         seeds = [b"stake", pool.key().as_ref(), owner.key().as_ref()], bump)]
     pub stake_entry: Account<'info, StakeEntry>,
+    #[account(constraint = stake_mint.key() == pool.stake_mint)]
+    pub stake_mint: InterfaceAccount<'info, Mint>,
+    #[account(constraint = reward_mint.key() == pool.reward_mint)]
+    pub reward_mint: InterfaceAccount<'info, Mint>,
     #[account(mut, constraint = stake_vault.mint == pool.stake_mint, constraint = stake_vault.owner == pool.key())]
-    pub stake_vault: Account<'info, TokenAccount>,
+    pub stake_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = reward_vault.mint == pool.reward_mint, constraint = reward_vault.owner == pool.key())]
-    pub reward_vault: Account<'info, TokenAccount>,
+    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = user_stake_ata.mint == pool.stake_mint)]
-    pub user_stake_ata: Account<'info, TokenAccount>,
+    pub user_stake_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = user_reward_ata.mint == pool.reward_mint)]
-    pub user_reward_ata: Account<'info, TokenAccount>,
+    pub user_reward_ata: InterfaceAccount<'info, TokenAccount>,
     pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
@@ -211,15 +215,19 @@ pub struct Unstake<'info> {
     #[account(mut, seeds = [b"stake", pool.key().as_ref(), owner.key().as_ref()], bump = stake_entry.bump,
         has_one = owner, has_one = pool)]
     pub stake_entry: Account<'info, StakeEntry>,
+    #[account(constraint = stake_mint.key() == pool.stake_mint)]
+    pub stake_mint: InterfaceAccount<'info, Mint>,
+    #[account(constraint = reward_mint.key() == pool.reward_mint)]
+    pub reward_mint: InterfaceAccount<'info, Mint>,
     #[account(mut, constraint = stake_vault.mint == pool.stake_mint, constraint = stake_vault.owner == pool.key())]
-    pub stake_vault: Account<'info, TokenAccount>,
+    pub stake_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = reward_vault.mint == pool.reward_mint, constraint = reward_vault.owner == pool.key())]
-    pub reward_vault: Account<'info, TokenAccount>,
+    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = user_stake_ata.mint == pool.stake_mint)]
-    pub user_stake_ata: Account<'info, TokenAccount>,
+    pub user_stake_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = user_reward_ata.mint == pool.reward_mint)]
-    pub user_reward_ata: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub user_reward_ata: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
@@ -231,11 +239,13 @@ pub struct ClaimRewards<'info> {
     #[account(mut, seeds = [b"stake", pool.key().as_ref(), owner.key().as_ref()], bump = stake_entry.bump,
         has_one = owner, has_one = pool)]
     pub stake_entry: Account<'info, StakeEntry>,
+    #[account(constraint = reward_mint.key() == pool.reward_mint)]
+    pub reward_mint: InterfaceAccount<'info, Mint>,
     #[account(mut, constraint = reward_vault.mint == pool.reward_mint, constraint = reward_vault.owner == pool.key())]
-    pub reward_vault: Account<'info, TokenAccount>,
+    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = user_reward_ata.mint == pool.reward_mint)]
-    pub user_reward_ata: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub user_reward_ata: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
