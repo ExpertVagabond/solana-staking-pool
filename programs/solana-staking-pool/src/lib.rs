@@ -19,6 +19,13 @@ pub mod solana_staking_pool {
         pool.last_update_ts = Clock::get()?.unix_timestamp;
         pool.accumulated_reward_per_token = 0;
         pool.bump = ctx.bumps.pool;
+
+        emit!(PoolInitialized {
+            authority: pool.authority,
+            staking_mint: pool.stake_mint,
+            reward_mint: pool.reward_mint,
+            reward_rate,
+        });
         Ok(())
     }
 
@@ -56,6 +63,12 @@ pub mod solana_staking_pool {
         entry.amount = entry.amount.checked_add(amount).ok_or(StakingError::MathOverflow)?;
         entry.reward_debt = calc_debt(entry.amount, acc_reward)?;
         entry.bump = ctx.bumps.stake_entry;
+
+        emit!(TokensStaked {
+            pool: pool_key,
+            user: ctx.accounts.owner.key(),
+            amount,
+        });
         Ok(())
     }
 
@@ -88,6 +101,12 @@ pub mod solana_staking_pool {
         let entry = &mut ctx.accounts.stake_entry;
         entry.amount = entry.amount.checked_sub(amount).ok_or(StakingError::MathOverflow)?;
         entry.reward_debt = calc_debt(entry.amount, pool.accumulated_reward_per_token)?;
+
+        emit!(TokensUnstaked {
+            pool: pool.key(),
+            user: ctx.accounts.owner.key(),
+            amount,
+        });
         Ok(())
     }
 
@@ -106,6 +125,12 @@ pub mod solana_staking_pool {
         ), pending)?;
 
         entry.reward_debt = calc_debt(entry.amount, pool.accumulated_reward_per_token)?;
+
+        emit!(RewardsClaimed {
+            pool: pool.key(),
+            user: ctx.accounts.owner.key(),
+            amount: pending,
+        });
         Ok(())
     }
 
@@ -253,4 +278,33 @@ pub enum StakingError {
     InsufficientStake,
     #[msg("No pending rewards")]
     NoPendingRewards,
+}
+
+#[event]
+pub struct PoolInitialized {
+    pub authority: Pubkey,
+    pub staking_mint: Pubkey,
+    pub reward_mint: Pubkey,
+    pub reward_rate: u64,
+}
+
+#[event]
+pub struct TokensStaked {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct TokensUnstaked {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct RewardsClaimed {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
 }
