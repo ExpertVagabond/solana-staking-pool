@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenInterface, TokenAccount, TransferChecked, transfer_checked};
+use anchor_spl::token_interface::{
+    transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 use solana_dao_voting::cpi as dao_cpi;
 use solana_dao_voting::cpi::accounts::CastVote as DaoCastVote;
 use solana_dao_voting::program::SolanaDaoVoting;
@@ -41,30 +43,63 @@ pub mod solana_staking_pool {
         let entry = &mut ctx.accounts.stake_entry;
 
         if entry.amount > 0 {
-            let pending = calc_pending(entry.amount, pool.accumulated_reward_per_token, entry.reward_debt)?;
+            let pending = calc_pending(
+                entry.amount,
+                pool.accumulated_reward_per_token,
+                entry.reward_debt,
+            )?;
             if pending > 0 {
-                let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
-                transfer_checked(CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    TransferChecked { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.reward_mint.to_account_info() },
-                    &[seeds],
-                ), pending, ctx.accounts.reward_mint.decimals)?;
+                let seeds: &[&[u8]] = &[
+                    b"pool",
+                    pool.authority.as_ref(),
+                    pool.stake_mint.as_ref(),
+                    &[pool.bump],
+                ];
+                transfer_checked(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.reward_vault.to_account_info(),
+                            to: ctx.accounts.user_reward_ata.to_account_info(),
+                            authority: ctx.accounts.pool.to_account_info(),
+                            mint: ctx.accounts.reward_mint.to_account_info(),
+                        },
+                        &[seeds],
+                    ),
+                    pending,
+                    ctx.accounts.reward_mint.decimals,
+                )?;
             }
         }
 
-        transfer_checked(CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked { from: ctx.accounts.user_stake_ata.to_account_info(), to: ctx.accounts.stake_vault.to_account_info(), authority: ctx.accounts.owner.to_account_info(), mint: ctx.accounts.stake_mint.to_account_info() },
-        ), amount, ctx.accounts.stake_mint.decimals)?;
+        transfer_checked(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.user_stake_ata.to_account_info(),
+                    to: ctx.accounts.stake_vault.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                    mint: ctx.accounts.stake_mint.to_account_info(),
+                },
+            ),
+            amount,
+            ctx.accounts.stake_mint.decimals,
+        )?;
 
         let pool = &mut ctx.accounts.pool;
         let pool_key = pool.key();
-        pool.total_staked = pool.total_staked.checked_add(amount).ok_or(StakingError::MathOverflow)?;
+        pool.total_staked = pool
+            .total_staked
+            .checked_add(amount)
+            .ok_or(StakingError::MathOverflow)?;
         let acc_reward = pool.accumulated_reward_per_token;
         let entry = &mut ctx.accounts.stake_entry;
         entry.owner = ctx.accounts.owner.key();
         entry.pool = pool_key;
-        entry.amount = entry.amount.checked_add(amount).ok_or(StakingError::MathOverflow)?;
+        entry.amount = entry
+            .amount
+            .checked_add(amount)
+            .ok_or(StakingError::MathOverflow)?;
         entry.reward_debt = calc_debt(entry.amount, acc_reward)?;
         entry.bump = ctx.bumps.stake_entry;
 
@@ -78,32 +113,68 @@ pub mod solana_staking_pool {
 
     pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
         require!(amount > 0, StakingError::ZeroAmount);
-        require!(ctx.accounts.stake_entry.amount >= amount, StakingError::InsufficientStake);
+        require!(
+            ctx.accounts.stake_entry.amount >= amount,
+            StakingError::InsufficientStake
+        );
         update_rewards(&mut ctx.accounts.pool)?;
 
         let pool = &ctx.accounts.pool;
         let entry = &mut ctx.accounts.stake_entry;
-        let pending = calc_pending(entry.amount, pool.accumulated_reward_per_token, entry.reward_debt)?;
-        let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
+        let pending = calc_pending(
+            entry.amount,
+            pool.accumulated_reward_per_token,
+            entry.reward_debt,
+        )?;
+        let seeds: &[&[u8]] = &[
+            b"pool",
+            pool.authority.as_ref(),
+            pool.stake_mint.as_ref(),
+            &[pool.bump],
+        ];
 
         if pending > 0 {
-            transfer_checked(CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                TransferChecked { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.reward_mint.to_account_info() },
-                &[seeds],
-            ), pending, ctx.accounts.reward_mint.decimals)?;
+            transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    TransferChecked {
+                        from: ctx.accounts.reward_vault.to_account_info(),
+                        to: ctx.accounts.user_reward_ata.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                        mint: ctx.accounts.reward_mint.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                pending,
+                ctx.accounts.reward_mint.decimals,
+            )?;
         }
 
-        transfer_checked(CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked { from: ctx.accounts.stake_vault.to_account_info(), to: ctx.accounts.user_stake_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.stake_mint.to_account_info() },
-            &[seeds],
-        ), amount, ctx.accounts.stake_mint.decimals)?;
+        transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.stake_vault.to_account_info(),
+                    to: ctx.accounts.user_stake_ata.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                    mint: ctx.accounts.stake_mint.to_account_info(),
+                },
+                &[seeds],
+            ),
+            amount,
+            ctx.accounts.stake_mint.decimals,
+        )?;
 
         let pool = &mut ctx.accounts.pool;
-        pool.total_staked = pool.total_staked.checked_sub(amount).ok_or(StakingError::MathOverflow)?;
+        pool.total_staked = pool
+            .total_staked
+            .checked_sub(amount)
+            .ok_or(StakingError::MathOverflow)?;
         let entry = &mut ctx.accounts.stake_entry;
-        entry.amount = entry.amount.checked_sub(amount).ok_or(StakingError::MathOverflow)?;
+        entry.amount = entry
+            .amount
+            .checked_sub(amount)
+            .ok_or(StakingError::MathOverflow)?;
         entry.reward_debt = calc_debt(entry.amount, pool.accumulated_reward_per_token)?;
 
         emit!(TokensUnstaked {
@@ -118,15 +189,33 @@ pub mod solana_staking_pool {
         update_rewards(&mut ctx.accounts.pool)?;
         let pool = &ctx.accounts.pool;
         let entry = &mut ctx.accounts.stake_entry;
-        let pending = calc_pending(entry.amount, pool.accumulated_reward_per_token, entry.reward_debt)?;
+        let pending = calc_pending(
+            entry.amount,
+            pool.accumulated_reward_per_token,
+            entry.reward_debt,
+        )?;
         require!(pending > 0, StakingError::NoPendingRewards);
 
-        let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
-        transfer_checked(CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked { from: ctx.accounts.reward_vault.to_account_info(), to: ctx.accounts.user_reward_ata.to_account_info(), authority: ctx.accounts.pool.to_account_info(), mint: ctx.accounts.reward_mint.to_account_info() },
-            &[seeds],
-        ), pending, ctx.accounts.reward_mint.decimals)?;
+        let seeds: &[&[u8]] = &[
+            b"pool",
+            pool.authority.as_ref(),
+            pool.stake_mint.as_ref(),
+            &[pool.bump],
+        ];
+        transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.reward_vault.to_account_info(),
+                    to: ctx.accounts.user_reward_ata.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                    mint: ctx.accounts.reward_mint.to_account_info(),
+                },
+                &[seeds],
+            ),
+            pending,
+            ctx.accounts.reward_mint.decimals,
+        )?;
 
         entry.reward_debt = calc_debt(entry.amount, pool.accumulated_reward_per_token)?;
 
@@ -155,40 +244,63 @@ pub mod solana_staking_pool {
         let entry = &mut ctx.accounts.stake_entry;
 
         if entry.amount > 0 {
-            let pending = calc_pending(entry.amount, pool.accumulated_reward_per_token, entry.reward_debt)?;
+            let pending = calc_pending(
+                entry.amount,
+                pool.accumulated_reward_per_token,
+                entry.reward_debt,
+            )?;
             if pending > 0 {
-                let seeds: &[&[u8]] = &[b"pool", pool.authority.as_ref(), pool.stake_mint.as_ref(), &[pool.bump]];
-                transfer_checked(CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    TransferChecked {
-                        from: ctx.accounts.reward_vault.to_account_info(),
-                        to: ctx.accounts.user_reward_ata.to_account_info(),
-                        authority: ctx.accounts.pool.to_account_info(),
-                        mint: ctx.accounts.reward_mint.to_account_info(),
-                    },
-                    &[seeds],
-                ), pending, ctx.accounts.reward_mint.decimals)?;
+                let seeds: &[&[u8]] = &[
+                    b"pool",
+                    pool.authority.as_ref(),
+                    pool.stake_mint.as_ref(),
+                    &[pool.bump],
+                ];
+                transfer_checked(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.reward_vault.to_account_info(),
+                            to: ctx.accounts.user_reward_ata.to_account_info(),
+                            authority: ctx.accounts.pool.to_account_info(),
+                            mint: ctx.accounts.reward_mint.to_account_info(),
+                        },
+                        &[seeds],
+                    ),
+                    pending,
+                    ctx.accounts.reward_mint.decimals,
+                )?;
             }
         }
 
-        transfer_checked(CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.user_stake_ata.to_account_info(),
-                to: ctx.accounts.stake_vault.to_account_info(),
-                authority: ctx.accounts.owner.to_account_info(),
-                mint: ctx.accounts.stake_mint.to_account_info(),
-            },
-        ), amount, ctx.accounts.stake_mint.decimals)?;
+        transfer_checked(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.user_stake_ata.to_account_info(),
+                    to: ctx.accounts.stake_vault.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                    mint: ctx.accounts.stake_mint.to_account_info(),
+                },
+            ),
+            amount,
+            ctx.accounts.stake_mint.decimals,
+        )?;
 
         let pool = &mut ctx.accounts.pool;
         let pool_key = pool.key();
-        pool.total_staked = pool.total_staked.checked_add(amount).ok_or(StakingError::MathOverflow)?;
+        pool.total_staked = pool
+            .total_staked
+            .checked_add(amount)
+            .ok_or(StakingError::MathOverflow)?;
         let acc_reward = pool.accumulated_reward_per_token;
         let entry = &mut ctx.accounts.stake_entry;
         entry.owner = ctx.accounts.owner.key();
         entry.pool = pool_key;
-        entry.amount = entry.amount.checked_add(amount).ok_or(StakingError::MathOverflow)?;
+        entry.amount = entry
+            .amount
+            .checked_add(amount)
+            .ok_or(StakingError::MathOverflow)?;
         entry.reward_debt = calc_debt(entry.amount, acc_reward)?;
         entry.bump = ctx.bumps.stake_entry;
 
@@ -231,22 +343,37 @@ fn update_rewards(pool: &mut Account<StakePool>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     if pool.total_staked > 0 && now > pool.last_update_ts {
         let elapsed = (now - pool.last_update_ts) as u128;
-        let increment = elapsed.checked_mul(pool.reward_rate as u128).ok_or(StakingError::MathOverflow)?
-            .checked_mul(PRECISION).ok_or(StakingError::MathOverflow)?
-            .checked_div(pool.total_staked as u128).ok_or(StakingError::MathOverflow)?;
-        pool.accumulated_reward_per_token = pool.accumulated_reward_per_token.checked_add(increment).ok_or(StakingError::MathOverflow)?;
+        let increment = elapsed
+            .checked_mul(pool.reward_rate as u128)
+            .ok_or(StakingError::MathOverflow)?
+            .checked_mul(PRECISION)
+            .ok_or(StakingError::MathOverflow)?
+            .checked_div(pool.total_staked as u128)
+            .ok_or(StakingError::MathOverflow)?;
+        pool.accumulated_reward_per_token = pool
+            .accumulated_reward_per_token
+            .checked_add(increment)
+            .ok_or(StakingError::MathOverflow)?;
     }
     pool.last_update_ts = now;
     Ok(())
 }
 
 fn calc_pending(amount: u64, accumulated: u128, debt: u128) -> Result<u64> {
-    let total = (amount as u128).checked_mul(accumulated).ok_or(StakingError::MathOverflow)?;
-    Ok(total.checked_sub(debt).ok_or(StakingError::MathOverflow)?.checked_div(PRECISION).ok_or(StakingError::MathOverflow)? as u64)
+    let total = (amount as u128)
+        .checked_mul(accumulated)
+        .ok_or(StakingError::MathOverflow)?;
+    Ok(total
+        .checked_sub(debt)
+        .ok_or(StakingError::MathOverflow)?
+        .checked_div(PRECISION)
+        .ok_or(StakingError::MathOverflow)? as u64)
 }
 
 fn calc_debt(amount: u64, accumulated: u128) -> Result<u128> {
-    (amount as u128).checked_mul(accumulated).ok_or_else(|| error!(StakingError::MathOverflow))
+    (amount as u128)
+        .checked_mul(accumulated)
+        .ok_or_else(|| error!(StakingError::MathOverflow))
 }
 
 #[derive(Accounts)]
